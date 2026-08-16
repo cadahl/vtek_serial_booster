@@ -1,0 +1,7 @@
+build-debug
+build-release
+test_simple
+test_simple.elf
+test_simple.o
+Thumbs.db
+.DS_Store
