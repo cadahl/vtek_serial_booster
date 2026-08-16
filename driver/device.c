@@ -55,14 +55,15 @@ struct VTekSerialDevice {
 };
 
 static void reset_paula(void);
-static void reset_rx_fifo(struct VTekSerialDevice *vsdev);
-static void reset_tx_fifo(struct VTekSerialDevice *vsdev);
 static void update_serial_status_from_cia(struct VTekSerialDevice *vsdev);
 static uint16_t get_tx_fifo_len(struct VTekSerialDevice *vsdev);
 static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1"));
 
+static void rx_fifo_reset(struct VTekSerialDevice *vsdev);
 static void rx_fifo_dequeue_n(struct VTekSerialDevice *vsdev, uint8_t *buffer, uint16_t len);
 static uint16_t rx_fifo_get_length(struct VTekSerialDevice *vsdev);
+
+static void tx_fifo_reset(struct VTekSerialDevice *vsdev);
 
 static bool rrq_enqueue(struct VTekSerialDevice *vsdev, struct IOExtSer *ioextser);
 static void rrq_try_dequeue_one(struct VTekSerialDevice *vsdev);
@@ -212,8 +213,8 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
         }
 
         reset_paula();
-        reset_rx_fifo(vsdev);
-        reset_tx_fifo(vsdev);
+        rx_fifo_reset(vsdev);
+        tx_fifo_reset(vsdev);
         update_serial_status_from_cia(vsdev);
 
         if (!vsdev->is_interrupt_server_installed) {
@@ -271,8 +272,8 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
 
             buffy_reset();
             reset_paula();
-            reset_rx_fifo(vsdev);
-            reset_tx_fifo(vsdev);
+            rx_fifo_reset(vsdev);
+            tx_fifo_reset(vsdev);
 
             AddIntServer(INTB_VERTB, &vsdev->vbl_interrupt);
             ioreq->io_Error = 0;
@@ -514,12 +515,12 @@ static void reset_paula(void) {
     custom.serper = 0x001F;
 }
 
-static void reset_rx_fifo(struct VTekSerialDevice *vsdev) {
+static void rx_fifo_reset(struct VTekSerialDevice *vsdev) {
     vsdev->rx_fifo_read_index = 0;
     vsdev->rx_fifo_write_index = 0;
 }
 
-static void reset_tx_fifo(struct VTekSerialDevice *vsdev) {
+static void tx_fifo_reset(struct VTekSerialDevice *vsdev) {
     vsdev->tx_fifo_read_index = 0;
     vsdev->tx_fifo_write_index = 0;
 }

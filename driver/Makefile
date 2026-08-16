@@ -1,7 +1,7 @@
 FILENAME=vtekser.device
 RELDIR=build-release
 DEBUGDIR=build-debug
-OBJECTS=device.o buffy.o util.o
+OBJECTS=unitybuild.o
 
 SRCDIRS=.
 INCDIRS=. /opt/amiga/m68k-amigaos/ndk-include/
