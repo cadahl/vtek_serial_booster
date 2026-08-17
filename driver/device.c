@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2026 Carl Ådahl / VTek */
+/* SPDX-License-Identifier: BSD-3-Clause */
 #include <proto/misc.h>
 #include <proto/exec.h>
 #include <clib/misc_protos.h>
@@ -14,21 +16,18 @@
 #include <devices/serial.h>
 #include <stdbool.h>
 #include <string.h>
+#include "config.h"
 #include "buffy.h"
 #include "util.h"
 
 extern struct Custom custom;
 extern struct CIA ciab;
 
-#define RX_FIFO_LEN 8192
-#define TX_FIFO_LEN 8192
-
-#define RRQ_LEN 8
-
 struct VTekSerialDevice {
     struct Library library;
 
     uint16_t serial_status;
+    uint16_t serper;
 
     uint8_t rx_fifo[RX_FIFO_LEN];
     uint8_t rx_fifo_h[RX_FIFO_LEN / 8];
@@ -44,7 +43,6 @@ struct VTekSerialDevice {
 
     uint8_t host_state;
     struct Interrupt vbl_interrupt;
-    bool is_nine_bits;
     bool is_serialport_owned;
     bool is_serialbits_owned;
     bool is_interrupt_server_installed;
@@ -65,19 +63,9 @@ static uint16_t rx_fifo_get_length(struct VTekSerialDevice *vsdev);
 
 static void tx_fifo_reset(struct VTekSerialDevice *vsdev);
 
+static bool rrq_is_empty(struct VTekSerialDevice *vsdev);
 static bool rrq_enqueue(struct VTekSerialDevice *vsdev, struct IOExtSer *ioextser);
 static void rrq_try_dequeue_one(struct VTekSerialDevice *vsdev);
-
-#if DEBUG
-/* KPrintF is provided either by libdebug.a (Bebbo's toolchain, linked via
-   -ldebug -mcrt=clib2) or by debug.c in this repo (Bartman's elf-toolchain,
-   which has no libdebug). Either way we just declare the prototype here. */
-extern void KPrintF(CONST_STRPTR fmt, ...);
-#endif
-
-#define STR(s) #s      /* Turn s into a string literal without expanding macro definitions (however, \
-                          if invoked from a macro, macro arguments are expanded). */
-#define XSTR(s) STR(s) /* Turn s into a string literal after macro-expanding it. */
 
 #define DEVICE_NAME "vtekser.device"
 #define DEVICE_DATE "(16 Aug 2026)"
@@ -282,17 +270,21 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
         case CMD_READ: {
             const ULONG len = ioextser->IOSer.io_Length;
             const uint16_t available_len = rx_fifo_get_length(vsdev);
-            if (len > available_len) {
+            // If there isn't enough data in the RX FIFO or requests have already been queued up,
+            // we must queue this request.
+            if (!rrq_is_empty(vsdev) || len > available_len) {
                 if (!rrq_enqueue(vsdev, ioextser)) {
                     // No more queue slots!
                     ioreq->io_Error = SerErr_BufErr;
                     return;
                 }
+                // If we queued the request, we must clear IOF_QUICK.
+                ioreq->io_Flags &= ~IOF_QUICK;
             } else {
                 rx_fifo_dequeue_n(vsdev, ioextser->IOSer.io_Data, len);
                 ioextser->IOSer.io_Actual = len;
-                ioreq->io_Error = 0;
             }
+            ioreq->io_Error = 0;
             break;
         }
         case CMD_WRITE: {
@@ -351,14 +343,14 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
 
             if (ioextser->io_ReadLen == 9) {
                 serper |= 0x8000;
-                vsdev->is_nine_bits = true;
-            } else {
-                vsdev->is_nine_bits = false;
             }
 
-            custom.serper = (uint16_t)serper;
-            wait_us(64);
+            vsdev->serper = serper;
 
+            custom.serper = serper;
+            wait_at_least_one_scanline();
+
+            // Send initial host state.
             custom.serper = BUFFY_HOST_STATE_PREFIX | vsdev->host_state;
 
             ioreq->io_Error = 0;
@@ -504,9 +496,6 @@ const ULONG auto_init_tables[4] = {
     (ULONG)init_device
 };
 
-
-
-
 static void reset_paula(void) {
     // Disable RBF and TBE interrupts.
     custom.intena = INTF_RBF | INTF_TBE;
@@ -541,7 +530,7 @@ static uint16_t get_tx_fifo_len(struct VTekSerialDevice *vsdev) {
     return wi - ri;
 }
 
-static inline void try_rx(struct VTekSerialDevice *vsdev) {
+static inline void try_rx8(struct VTekSerialDevice *vsdev) {
     const uint16_t serdatr = custom.serdatr;
     if ((serdatr & SERDATR_RBF) == 0) {
         return;
@@ -553,18 +542,33 @@ static inline void try_rx(struct VTekSerialDevice *vsdev) {
         return;
     }
     vsdev->rx_fifo[write_index] = serdatr;
-    if (vsdev->is_nine_bits) {
-        const uint8_t mask = 1 << (write_index & 7);
-        if (serdatr & 0x100) {
-            vsdev->rx_fifo_h[write_index >> 3] |= mask;
-        } else {
-            vsdev->rx_fifo_h[write_index >> 3] &= ~mask;
-        }
-    }
     vsdev->rx_fifo_write_index = next_write_index;
 }
 
-static inline void try_tx(struct VTekSerialDevice *vsdev) {
+static inline void try_rx9(struct VTekSerialDevice *vsdev) {
+    const uint16_t serdatr = custom.serdatr;
+    if ((serdatr & SERDATR_RBF) == 0) {
+        return;
+    }
+    const uint16_t write_index = vsdev->rx_fifo_write_index;
+    const uint16_t next_write_index = (write_index + 1) & (RX_FIFO_LEN - 1);
+    if (next_write_index == vsdev->rx_fifo_read_index) {
+        // FIFO full!
+        return;
+    }
+    vsdev->rx_fifo[write_index] = serdatr;
+
+    const uint8_t mask = 1 << (write_index & 7);
+    if (serdatr & 0x100) {
+        vsdev->rx_fifo_h[write_index >> 3] |= mask;
+    } else {
+        vsdev->rx_fifo_h[write_index >> 3] &= ~mask;
+    }
+
+    vsdev->rx_fifo_write_index = next_write_index;
+}
+
+static inline void try_tx8(struct VTekSerialDevice *vsdev) {
     const uint16_t read_index = vsdev->tx_fifo_read_index;
     
     if (read_index == vsdev->tx_fifo_write_index) {
@@ -581,22 +585,40 @@ static inline void try_tx(struct VTekSerialDevice *vsdev) {
     uint16_t data = vsdev->tx_fifo[read_index];
     vsdev->tx_fifo_read_index = (read_index + 1) & (TX_FIFO_LEN - 1);
 
-    if (vsdev->is_nine_bits) {
-        const uint8_t mask = 1 << (read_index & 7);
-        const uint8_t data_h = vsdev->tx_fifo_h[read_index >> 3];
-        if (data_h & mask) {
-            data |= 0x300;
-        } else {
-            data |= 0x200;
-        }
+    data |= 0x100;
+
+    custom.serdat = data;
+}
+
+static inline void try_tx9(struct VTekSerialDevice *vsdev) {
+    const uint16_t read_index = vsdev->tx_fifo_read_index;
+    
+    if (read_index == vsdev->tx_fifo_write_index) {
+        // Nothing to send.
+        return;
+    }
+
+    const uint16_t intreqr = custom.intreqr;
+    if ((intreqr & INTF_TBE) == 0) {
+        // Can't send yet.
+        return;
+    }
+
+    uint16_t data = vsdev->tx_fifo[read_index];
+    vsdev->tx_fifo_read_index = (read_index + 1) & (TX_FIFO_LEN - 1);
+
+    const uint8_t mask = 1 << (read_index & 7);
+    const uint8_t data_h = vsdev->tx_fifo_h[read_index >> 3];
+    if (data_h & mask) {
+        data |= 0x300;
     } else {
-        data |= 0x100;
+        data |= 0x200;
     }
 
     custom.serdat = data;
 }
 
-static void __attribute__((used)) vbl_handler(struct VTekSerialDevice *vsdev asm("a1")) {
+static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1")) {
     // TODO: set a vblank budget and keep to it. Right now we poll as much as we can.
     // TODO: find out the actual visible area in vpos numbers and compare against these boundaries.
 
@@ -619,19 +641,31 @@ static void __attribute__((used)) vbl_handler(struct VTekSerialDevice *vsdev asm
     DISABLE_INTERRUPTS();
 
     const volatile uint32_t *vposr32 = (const volatile uint32_t *)0xdff004;
-    uint32_t vpos = *vposr32 & 0x1FF00;
-    while (vpos < 0x2C00) {
-        try_rx(vsdev);
-        try_tx(vsdev);
-        RESTORE_INTERRUPTS();
-        DISABLE_INTERRUPTS();
-        vpos = *vposr32 & 0x1FF00;
+
+    if (vsdev->serper & 0x8000) {
+        uint32_t vpos = *vposr32 & 0x1FF00;
+        while (vpos < 0x2C00) {
+            try_rx9(vsdev);
+            try_tx9(vsdev);
+            RESTORE_INTERRUPTS();
+            DISABLE_INTERRUPTS();
+            vpos = *vposr32 & 0x1FF00;
+        }
+    } else {
+        uint32_t vpos = *vposr32 & 0x1FF00;
+        while (vpos < 0x2C00) {
+            try_rx8(vsdev);
+            try_tx8(vsdev);
+            RESTORE_INTERRUPTS();
+            DISABLE_INTERRUPTS();
+            vpos = *vposr32 & 0x1FF00;
+        }
     }
 
     RESTORE_INTERRUPTS();
 
     // Now we're outside the VBLANK region, so display DMA is going again.
-    // We use this moment to try to complete one queued up CMD_READ request.
+    // We use this moment to try to complete one CMD_READ request from the RRQ.
     rrq_try_dequeue_one(vsdev);
 }
 
@@ -641,6 +675,10 @@ static void rx_fifo_dequeue_n(struct VTekSerialDevice *vsdev, uint8_t *buffer, u
         vsdev->rx_fifo_read_index = (vsdev->rx_fifo_read_index + 1) & (RX_FIFO_LEN - 1);
         *buffer++ = data;
     }
+}
+
+static bool rrq_is_empty(struct VTekSerialDevice *vsdev) {
+    return vsdev->rrq_read_index == vsdev->rrq_write_index;
 }
 
 static bool rrq_enqueue(struct VTekSerialDevice *vsdev, struct IOExtSer *ioextser) {
