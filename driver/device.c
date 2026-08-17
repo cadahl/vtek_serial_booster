@@ -16,11 +16,18 @@
 #include <devices/serial.h>
 #include <stdbool.h>
 #include <string.h>
-#include "config.h"
 #include "buffy.h"
 #include "util.h"
 #include "char_fifo.h"
 #include "ptr_fifo.h"
+
+// Amiga-side RX and TX FIFO lengths.
+#define DEFAULT_RX_FIFO_LEN 8192
+#define DEFAULT_TX_FIFO_LEN 8192
+
+// Default IO request FIFO lengths.
+#define DEFAULT_RRQ_LEN 16
+#define DEFAULT_TRQ_LEN 16
 
 extern struct Custom custom;
 extern struct CIA ciab;
@@ -162,10 +169,10 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
     }
 
     reset_paula();
-    char_fifo_init(&vsdev->rx_fifo, 8192);
-    char_fifo_init(&vsdev->tx_fifo, 8192);
-    ptr_fifo_init(&vsdev->rrq, 16);
-    ptr_fifo_init(&vsdev->trq, 16);
+    char_fifo_init(&vsdev->rx_fifo, DEFAULT_RX_FIFO_LEN);
+    char_fifo_init(&vsdev->tx_fifo, DEFAULT_TX_FIFO_LEN);
+    ptr_fifo_init(&vsdev->rrq, DEFAULT_RRQ_LEN);
+    ptr_fifo_init(&vsdev->trq, DEFAULT_TRQ_LEN);
 
     serialbits_init(vsdev);
     serialbits_update_serial_status(vsdev);
