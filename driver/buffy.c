@@ -7,7 +7,7 @@
 
 extern struct Custom custom;
 
-vserr_t buffy_open(void) {
+VSFUNC vserr_t buffy_open(void) {
     const int max_attempts = 16;
 
     // Read once to empty the rx buffer.
@@ -48,12 +48,12 @@ vserr_t buffy_open(void) {
     return VSErr_Success;
 }
 
-void buffy_reset(void) {
+VSFUNC void buffy_reset(void) {
     custom.serper = BUFFY_CMD_RESET;
     wait_at_least_one_scanline();
 }
 
-void buffy_close(void) {
+VSFUNC void buffy_close(void) {
     custom.serper = BUFFY_HOST_STATE_PREFIX | BUFFY_HOST_STATE_CTS_ACTIVE | BUFFY_HOST_STATE_RTS_ACTIVE;
     wait_at_least_one_scanline();
     custom.serper = BUFFY_CMD_LOCK;

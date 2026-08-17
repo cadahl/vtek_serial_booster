@@ -15,16 +15,16 @@ ifeq ($(MAKECMDGOALS), debug)
  EXTRA_LDFLAGS+= -ldebug
 else
  DIR=$(RELDIR)
- EXTRA_CFLAGS+= -g -s -O2
+ EXTRA_CFLAGS+= -g -Os -s
 endif
 
 CC=/opt/amiga/bin/m68k-amigaos-gcc
 AS=/opt/amiga/bin/m68k-amigaos-as
 EXTRA_LDFLAGS+= -Wl,-Map=$(DIR)/$(FILENAME).map
 
-CFLAGS+= -m68000 -Wall -Wextra -Wno-unused-parameter -Wno-volatile-register-var -fomit-frame-pointer -fvisibility=hidden
+CFLAGS+= -m68000 -Wall -Wextra -Wno-unused-function -Wno-unused-parameter -Wno-volatile-register-var -fomit-frame-pointer
 ASFLAGS+= -m68000
-LDFLAGS+= -nostartfiles -lamiga -fvisibility=hidden
+LDFLAGS+= -nostartfiles -lamiga
 
 OBJS:=$(addprefix $(DIR)/,$(OBJECTS))
 
@@ -43,13 +43,13 @@ $(DIR)/$(FILENAME):
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
 
 hunk-toolchain: $(DIR) $(OBJS) $(DIR)/$(FILENAME)
-	/opt/amiga/bin/m68k-amigaos-objdump -DxS $(DIR)/$(FILENAME) > $(DIR)/$(FILENAME).s
+	/opt/amiga/bin/m68k-amigaos-objdump -dxS $(DIR)/$(FILENAME) > $(DIR)/$(FILENAME).s
 
 $(DIR):
 	@mkdir $(DIR)
 
 $(DIR)/%.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) -DVSFUNC=static $(CFLAGS) -c -o $@ $<
 	@$(DEL_EXE)
 	
 $(DIR)/%.o: %.s

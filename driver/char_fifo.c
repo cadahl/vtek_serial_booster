@@ -1,10 +1,12 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2026 Carl Ådahl / VTek */
+/* SPDX-License-Identifier: BSD-3-Clause */
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <proto/exec.h>
 #include "vserr.h"
 #include "char_fifo.h"
 
-vserr_t char_fifo_init(struct char_fifo *cf, uint16_t capacity) {
+VSFUNC vserr_t char_fifo_init(struct char_fifo *cf, uint16_t capacity) {
     // Needs to be divisible by 8.
     if (capacity == 0 || capacity & 7) {
         return VSErr_InvParam;
@@ -22,7 +24,7 @@ vserr_t char_fifo_init(struct char_fifo *cf, uint16_t capacity) {
     return VSErr_Success;
 }
 
-void char_fifo_deinit(struct char_fifo *cf) {
+VSFUNC void char_fifo_deinit(struct char_fifo *cf) {
     FreeMem(cf->items, cf->capacity);
     cf->items = NULL;
     cf->capacity = 0;
@@ -30,12 +32,12 @@ void char_fifo_deinit(struct char_fifo *cf) {
     cf->write_index = 0;
 }
 
-void char_fifo_reset(struct char_fifo *cf) {
+VSFUNC void char_fifo_reset(struct char_fifo *cf) {
     cf->read_index = 0;
     cf->write_index = 0;
 }
 
-vserr_t char_fifo_enqueue(struct char_fifo *cf, uint8_t c) {
+VSFUNC vserr_t char_fifo_enqueue(struct char_fifo *cf, uint8_t c) {
     const uint16_t write_index = cf->write_index;
     const uint16_t next_write_index = (write_index + 1) & (cf->capacity - 1);
 
@@ -49,7 +51,7 @@ vserr_t char_fifo_enqueue(struct char_fifo *cf, uint8_t c) {
     return VSErr_Success;
 }
 
-vserr_t char_fifo_enqueue_n(struct char_fifo *cf, const uint8_t *buffer, uint16_t len) {
+VSFUNC vserr_t char_fifo_enqueue_n(struct char_fifo *cf, const uint8_t *buffer, uint16_t len) {
     const uint16_t available_capacity = cf->capacity - char_fifo_get_length(cf);
     if (len > available_capacity) {
         return VSErr_BadLength;
@@ -71,7 +73,7 @@ vserr_t char_fifo_enqueue_n(struct char_fifo *cf, const uint8_t *buffer, uint16_
     return VSErr_Success;
 }
 
-vserr_t char_fifo_dequeue(struct char_fifo *cf, uint8_t *c) {
+VSFUNC vserr_t char_fifo_dequeue(struct char_fifo *cf, uint8_t *c) {
     if (cf->read_index == cf->write_index) {
         return VSErr_BadLength;
     }
@@ -81,7 +83,7 @@ vserr_t char_fifo_dequeue(struct char_fifo *cf, uint8_t *c) {
     return VSErr_Success;
 }
 
-vserr_t char_fifo_dequeue_n(struct char_fifo *cf, uint8_t *buffer, uint16_t len) {
+VSFUNC vserr_t char_fifo_dequeue_n(struct char_fifo *cf, uint8_t *buffer, uint16_t len) {
     const uint16_t available_length = char_fifo_get_length(cf);
     if (len > available_length) {
         return VSErr_BadLength;
@@ -103,7 +105,7 @@ vserr_t char_fifo_dequeue_n(struct char_fifo *cf, uint8_t *buffer, uint16_t len)
     return VSErr_Success;
 }
 
-uint16_t char_fifo_get_length(const struct char_fifo *cf) {
+VSFUNC uint16_t char_fifo_get_length(const struct char_fifo *cf) {
     const uint16_t read_index = cf->read_index;
     const uint16_t write_index = cf->write_index;
     return write_index < read_index ? (int32_t)(cf->capacity + write_index) - read_index : write_index - read_index;

@@ -5,37 +5,33 @@
 
 extern struct Custom custom;
 
-void wait_at_least_one_scanline(void) {
+static __attribute__((noinline)) void abuncha_nops(void) {
+    // Leave some room for DMA - 256 clock cycles.
+    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+}
+
+VSFUNC void wait_at_least_one_scanline(void) {
     uint16_t first = custom.vhposr & 0xFF00;
     uint16_t second = first;
     do {
-        // Leave some room for DMA - 256 clock cycles.
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+        abuncha_nops();
         second = custom.vhposr & 0xFF00;
     } while(second == first);
     uint16_t third = second;
     do {
-        // Leave some room for DMA - 256 clock cycles.
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-        NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
+        abuncha_nops();
         third = custom.vhposr & 0xFF00;
     } while(third == second);
 }
 
-void wait_us(uint16_t us) {
+VSFUNC void wait_us(uint16_t us) {
     uint16_t lines_to_wait = (us + 63) / 64;     
     uint16_t last_line = custom.vhposr & 0xFF00;
     uint16_t lines_counted = 0;

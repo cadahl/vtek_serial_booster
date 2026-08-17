@@ -7,3 +7,4 @@
 #include "buffy.c"
 #include "util.c"
 #include "char_fifo.c"
+#include "ptr_fifo.c"

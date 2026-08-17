@@ -20,6 +20,7 @@
 #include "buffy.h"
 #include "util.h"
 #include "char_fifo.h"
+#include "ptr_fifo.h"
 
 extern struct Custom custom;
 extern struct CIA ciab;
@@ -39,17 +40,13 @@ struct VTekSerialDevice {
     bool is_serialbits_owned;
     bool is_interrupt_server_installed;
 
-    struct IOExtSer *rrq[RRQ_LEN];
-    uint16_t rrq_read_index;
-    uint16_t rrq_write_index;
+    struct ptr_fifo rrq;
 };
 
 static void reset_paula(void);
 static void update_serial_status_from_cia(struct VTekSerialDevice *vsdev);
 static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1"));
 
-static bool rrq_is_empty(struct VTekSerialDevice *vsdev);
-static vserr_t rrq_enqueue(struct VTekSerialDevice *vsdev, struct IOExtSer *ioextser);
 static void rrq_try_dequeue_one(struct VTekSerialDevice *vsdev);
 
 #define DEVICE_NAME "vtekser.device"
@@ -68,7 +65,7 @@ A library or device with a romtag should start with moveq #-1,d0 (to
 safely return an error if a user tries to execute the file), followed by a
 Resident structure.
 ------------------------------------------------------------*/
-int __attribute__ ((visibility ("default"))) __attribute__((no_reorder)) _start()
+int __attribute__((no_reorder)) _start()
 {
     return -1;
 }
@@ -187,6 +184,7 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
     reset_paula();
     char_fifo_init(&vsdev->rx_fifo, 8192);
     char_fifo_init(&vsdev->tx_fifo, 8192);
+    ptr_fifo_init(&vsdev->rrq, 8);
     update_serial_status_from_cia(vsdev);
 
     if (!vsdev->is_interrupt_server_installed) {
@@ -217,6 +215,7 @@ static BPTR do_close(struct Library *dev, struct IORequest *ioreq)
 
     char_fifo_deinit(&vsdev->rx_fifo);
     char_fifo_deinit(&vsdev->tx_fifo);
+    ptr_fifo_deinit(&vsdev->rrq);
 
     ioreq->io_Device = NULL;
     ioreq->io_Unit = NULL;
@@ -266,10 +265,10 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
             // If there isn't enough data in the RX FIFO,
             // *OR* the request queue isn't empty, this
             // request must also be queued to be completed in order.
-            if (len > available_len || !rrq_is_empty(vsdev)) {
-                vserr_t err = rrq_enqueue(vsdev, ioextser);
+            if (len > available_len || !ptr_fifo_is_empty(&vsdev->rrq)) {
+                vserr_t err = ptr_fifo_enqueue(&vsdev->rrq, ioextser);
                 if (err) {
-                    ioreq->io_Error = err;
+                    ioreq->io_Error = VSErr_TooManyRequests;
                     return;
                 }
                 // Request is now asynchronous, so must clear IOF_QUICK.
@@ -564,37 +563,22 @@ static void update_serial_status_from_cia(struct VTekSerialDevice *vsdev) {
     vsdev->serial_status = (vsdev->serial_status & 0xFF00) | (ciab.ciapra & 0xFC);
 }
 
-static bool rrq_is_empty(struct VTekSerialDevice *vsdev) {
-    return vsdev->rrq_read_index == vsdev->rrq_write_index;
-}
-
-static vserr_t rrq_enqueue(struct VTekSerialDevice *vsdev, struct IOExtSer *ioextser) {
-    const uint16_t next_write_index = (vsdev->rrq_write_index + 1) & (RRQ_LEN - 1);
-
-    if (next_write_index == vsdev->rrq_read_index) {
-        // RRQ is full!
-        return VSErr_TooManyRequests;
-    }
-
-    vsdev->rrq[vsdev->rrq_write_index] = ioextser;
-    return VSErr_Success;
-}
-
 static void rrq_try_dequeue_one(struct VTekSerialDevice *vsdev) {
-    if (vsdev->rrq_read_index == vsdev->rrq_write_index) {
+    struct IOExtSer *ioextser = NULL;
+    vserr_t err = ptr_fifo_peek(&vsdev->rrq, (void **)&ioextser);
+    if (err) {
         // RRQ is empty.
         return;
     }
 
-    struct IOExtSer *ioextser = vsdev->rrq[vsdev->rrq_read_index];
     const uint32_t requested_len = ioextser->IOSer.io_Length;
 
-    vserr_t err = char_fifo_dequeue_n(&vsdev->rx_fifo, ioextser->IOSer.io_Data, requested_len);
+    err = char_fifo_dequeue_n(&vsdev->rx_fifo, ioextser->IOSer.io_Data, requested_len);
     if (err) {
         // Not enough bytes in RX FIFO yet.
         return;
     }
     ioextser->IOSer.io_Actual = requested_len;
 
-    vsdev->rrq_read_index = (vsdev->rrq_read_index + 1) & (RRQ_LEN - 1);
+    ptr_fifo_dequeue(&vsdev->rrq, NULL);
 }

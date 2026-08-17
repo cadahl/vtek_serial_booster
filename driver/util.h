@@ -5,18 +5,21 @@
 
 #include <stdint.h>
 
+#ifndef VSFUNC
+#define VSFUNC
+#endif
+
 #define STR(s) #s      /* Turn s into a string literal without expanding macro definitions (however, \
                           if invoked from a macro, macro arguments are expanded). */
 #define XSTR(s) STR(s) /* Turn s into a string literal after macro-expanding it. */
 
 #define NOP() __asm__ __volatile__ ("nop")
 
-void wait_us(uint16_t microseconds);
-void wait_at_least_one_scanline(void);
+VSFUNC void wait_us(uint16_t microseconds);
+VSFUNC void wait_at_least_one_scanline(void);
 
 #define SERDATR_OVF 0x8000  
-#define SERDATR_RBF 0x4000  
-
+#define SERDATR_RBF 0x4000 
 
 #if DEBUG
 /* KPrintF is provided either by libdebug.a (Bebbo's toolchain, linked via

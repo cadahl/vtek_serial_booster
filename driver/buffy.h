@@ -5,10 +5,11 @@
 
 #include <stdbool.h>
 #include "vserr.h"
+#include "util.h"
 
-vserr_t buffy_open(void);
-void buffy_reset(void);
-void buffy_close(void);
+VSFUNC vserr_t buffy_open(void);
+VSFUNC void buffy_reset(void);
+VSFUNC void buffy_close(void);
 
 /*
     Buffy commands are encoded in the bottom seven bits of a special SERPER write.

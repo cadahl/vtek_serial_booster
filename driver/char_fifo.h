@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2026 Carl Ådahl / VTek */
+/* SPDX-License-Identifier: BSD-3-Clause */
 #ifndef CHAR_FIFO_H
 #define CHAR_FIFO_H
 
@@ -15,49 +17,49 @@ struct char_fifo {
 /*
     Initialize a FIFO, allocating memory according to the parameters.
 */
-vserr_t char_fifo_init(struct char_fifo *cf, uint16_t capacity);
+VSFUNC vserr_t char_fifo_init(struct char_fifo *cf, uint16_t capacity);
 
 /*
     Deinitialize a FIFO, freeing allocated memory.
 */
-void char_fifo_deinit(struct char_fifo *cf);
+VSFUNC void char_fifo_deinit(struct char_fifo *cf);
 
 /*
     Get the number of characters currently in a FIFO.
 */
-uint16_t char_fifo_get_length(const struct char_fifo *cf);
+VSFUNC uint16_t char_fifo_get_length(const struct char_fifo *cf);
 
 /*
     Reset the read/write pointers in a FIFO, effectively clearing it.
 */
-inline void char_fifo_reset(struct char_fifo *cf);
+VSFUNC void char_fifo_reset(struct char_fifo *cf);
 
 /*
     Enqueue a character in a FIFO.
 
     Returns VSErr_BadLength if the FIFO is full.
 */
-inline vserr_t char_fifo_enqueue(struct char_fifo *cf, uint8_t c);
+VSFUNC vserr_t char_fifo_enqueue(struct char_fifo *cf, uint8_t c);
 
 /*
     Enqueue N characters in a FIFO.
 
     Returns VSErr_BadLength if the FIFO does not contain the number of characters specified.
 */
-inline vserr_t char_fifo_enqueue_n(struct char_fifo *cf, const uint8_t *buffer, uint16_t len);
+VSFUNC vserr_t char_fifo_enqueue_n(struct char_fifo *cf, const uint8_t *buffer, uint16_t len);
 
 /*
     Dequeue a character from a FIFO.
 
     Returns VSErr_BadLength if the FIFO is empty.
 */
-inline vserr_t char_fifo_dequeue(struct char_fifo *cf, uint8_t *c);
+VSFUNC vserr_t char_fifo_dequeue(struct char_fifo *cf, uint8_t *c);
 
 /*
     Dequeue N characters from a FIFO.
 
     Returns VSErr_BadLength if the FIFO does not contain the number of characters specified.
 */
-inline vserr_t char_fifo_dequeue_n(struct char_fifo *cf, uint8_t *buffer, uint16_t len);
+VSFUNC vserr_t char_fifo_dequeue_n(struct char_fifo *cf, uint8_t *buffer, uint16_t len);
 
 #endif
