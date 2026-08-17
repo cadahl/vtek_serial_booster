@@ -30,6 +30,11 @@ VSFUNC void char_fifo_deinit(struct char_fifo *cf);
 VSFUNC uint16_t char_fifo_get_length(const struct char_fifo *cf);
 
 /*
+    Get the number of characters that will fit in the remaining space in a FIFO.
+*/
+VSFUNC uint16_t char_fifo_get_remaining_capacity(const struct char_fifo *cf);
+
+/*
     Reset the read/write pointers in a FIFO, effectively clearing it.
 */
 VSFUNC void char_fifo_reset(struct char_fifo *cf);

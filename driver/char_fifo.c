@@ -52,8 +52,8 @@ VSFUNC vserr_t char_fifo_enqueue(struct char_fifo *cf, uint8_t c) {
 }
 
 VSFUNC vserr_t char_fifo_enqueue_n(struct char_fifo *cf, const uint8_t *buffer, uint16_t len) {
-    const uint16_t available_capacity = cf->capacity - char_fifo_get_length(cf);
-    if (len > available_capacity) {
+    const uint16_t remaining_capacity = char_fifo_get_remaining_capacity(cf);
+    if (len > remaining_capacity) {
         return VSErr_BadLength;
     }
 
@@ -109,4 +109,8 @@ VSFUNC uint16_t char_fifo_get_length(const struct char_fifo *cf) {
     const uint16_t read_index = cf->read_index;
     const uint16_t write_index = cf->write_index;
     return write_index < read_index ? (int32_t)(cf->capacity + write_index) - read_index : write_index - read_index;
+}
+
+VSFUNC uint16_t char_fifo_get_remaining_capacity(const struct char_fifo *cf) {
+    return cf->capacity - char_fifo_get_length(cf);
 }

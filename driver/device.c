@@ -38,6 +38,7 @@ struct VTekSerialDevice {
     struct char_fifo rx_fifo;
     struct char_fifo tx_fifo;
     struct ptr_fifo rrq;
+    struct ptr_fifo trq;
 };
 
 static void reset_paula(void);
@@ -48,6 +49,7 @@ static void serialbits_deinit(struct VTekSerialDevice *vsdev);
 static void serialbits_update_serial_status(struct VTekSerialDevice *vsdev);
 
 static void rrq_try_complete_one(struct VTekSerialDevice *vsdev);
+static void trq_try_complete_one(struct VTekSerialDevice *vsdev);
 
 #define DEVICE_NAME "vtekser.device"
 #define DEVICE_DATE "(16 Aug 2026)"
@@ -162,7 +164,8 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
     reset_paula();
     char_fifo_init(&vsdev->rx_fifo, 8192);
     char_fifo_init(&vsdev->tx_fifo, 8192);
-    ptr_fifo_init(&vsdev->rrq, 8);
+    ptr_fifo_init(&vsdev->rrq, 16);
+    ptr_fifo_init(&vsdev->trq, 16);
 
     serialbits_init(vsdev);
     serialbits_update_serial_status(vsdev);
@@ -195,6 +198,7 @@ static BPTR do_close(struct Library *dev, struct IORequest *ioreq)
     char_fifo_deinit(&vsdev->rx_fifo);
     char_fifo_deinit(&vsdev->tx_fifo);
     ptr_fifo_deinit(&vsdev->rrq);
+    ptr_fifo_deinit(&vsdev->trq);
 
     FreeMiscResource(MR_SERIALPORT);
     FreeMiscResource(MR_SERIALBITS);
@@ -264,21 +268,38 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
             break;
         }
         case CMD_WRITE: {
-            int32_t len = ioextser->IOSer.io_Length;
+            if (ioextser->IOSer.io_Length > 32767) {
+                ioreq->io_Error = IOERR_BADLENGTH;
+                return;
+            }
             const uint8_t *in_buffer = (uint8_t *)ioextser->IOSer.io_Data;
+            int16_t len = ioextser->IOSer.io_Length;
+            const uint16_t available_space = char_fifo_get_remaining_capacity(&vsdev->tx_fifo);
 
             // A negative io_Length means it's a string.
             if (len < 0) {
                 len = strlen((const char *)in_buffer);
+
+                // TODO: Figure out if this is OK to do - editing the user IO request.
+                ioextser->IOSer.io_Length = len;
             }
 
-            vserr_t err = char_fifo_enqueue_n(&vsdev->tx_fifo, (const uint8_t *)ioextser->IOSer.io_Data, len);
-            if (err) {
-                ioreq->io_Error = err;
-                break;
+            // If there isn't enough remaining capacity in the TX FIFO,
+            // *OR* the request queue isn't empty, this
+            // request must also be queued to be completed in order.
+            if (len > available_space || !ptr_fifo_is_empty(&vsdev->trq)) {
+                vserr_t err = ptr_fifo_enqueue(&vsdev->trq, ioextser);
+                if (err) {
+                    ioreq->io_Error = VSErr_TooManyRequests;
+                    return;
+                }
+                // Request is now asynchronous, so must clear IOF_QUICK.
+                ioreq->io_Flags &= ~IOF_QUICK;
+            } else {
+                // Complete the request immediately.
+                char_fifo_enqueue_n(&vsdev->rx_fifo, ioextser->IOSer.io_Data, len);
+                ioextser->IOSer.io_Actual = len;
             }
-
-            ioextser->IOSer.io_Actual = len;
             ioreq->io_Error = 0;
             break;
         }
@@ -305,7 +326,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
                 break;
             } 
 
-            uint32_t serper = (uint16_t)((((3546895ULL << 20ULL) / ioextser->io_Baud) >> 20ULL) - 1);
+            uint32_t serper = (uint16_t)((((3546895ULL << 16ULL) / ioextser->io_Baud) >> 16ULL) - 1);
 
             if (serper > 0x7EFF) {
                 serper = 0x7EFF;
@@ -535,8 +556,12 @@ static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1")) {
     RESTORE_INTERRUPTS();
 
     // Now we're outside the VBLANK region, so display DMA is going again.
-    // We use this moment to try to complete one CMD_READ request from the RRQ.
+
+    // We may have filled up the RX FIFO a bit. See if we can complete a queued read request.
     rrq_try_complete_one(vsdev);
+
+    // We may have emptied the TX FIFO a bit. See if we can complete a queued write request.
+    trq_try_complete_one(vsdev);
 }
 
 static void rrq_try_complete_one(struct VTekSerialDevice *vsdev) {
@@ -547,16 +572,40 @@ static void rrq_try_complete_one(struct VTekSerialDevice *vsdev) {
         return;
     }
 
-    const uint32_t requested_len = ioextser->IOSer.io_Length;
+    const uint16_t requested_len = ioextser->IOSer.io_Length;
 
     err = char_fifo_dequeue_n(&vsdev->rx_fifo, ioextser->IOSer.io_Data, requested_len);
     if (err) {
         // Not enough bytes in RX FIFO yet.
         return;
     }
+
     ioextser->IOSer.io_Actual = requested_len;
+    ReplyMsg(&ioextser->IOSer.io_Message);
 
     ptr_fifo_dequeue(&vsdev->rrq, NULL);
+}
+
+static void trq_try_complete_one(struct VTekSerialDevice *vsdev) {
+    struct IOExtSer *ioextser = NULL;
+    vserr_t err = ptr_fifo_peek(&vsdev->trq, (void **)&ioextser);
+    if (err) {
+        // TRQ is empty.
+        return;
+    }
+
+    const uint16_t len = ioextser->IOSer.io_Length;
+
+    err = char_fifo_enqueue_n(&vsdev->rx_fifo, ioextser->IOSer.io_Data, len);
+    if (err) {
+        // Not enough bytes in TX FIFO yet.
+        return;
+    }
+
+    ioextser->IOSer.io_Actual = len;
+    ReplyMsg(&ioextser->IOSer.io_Message);
+
+    ptr_fifo_dequeue(&vsdev->trq, NULL);
 }
 
 static void serialbits_init(struct VTekSerialDevice *vsdev) {
