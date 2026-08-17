@@ -7,28 +7,36 @@
 
 extern struct Custom custom;
 
-bool buffy_open(void) {
+vserr_t buffy_open(void) {
+    const int max_attempts = 16;
+
     // Read once to empty the rx buffer.
     uint16_t serdatr = custom.serdatr;
 
     custom.serper = BUFFY_CMD_UNLOCK_REQUEST;
 
-    do {
+    int attempts = 1;
+    serdatr = custom.serdatr;
+    while (attempts < max_attempts && !(serdatr & SERDATR_RBF)) {
         wait_at_least_one_scanline();
         serdatr = custom.serdatr;
-    } while (!(serdatr & SERDATR_RBF));
+        ++attempts;
+    }
     
     const uint8_t challenge_code = serdatr & 0xFF;
     custom.serper = BUFFY_CMD_UNLOCK_RESPONSE_PREFIX | challenge_code;
 
-    do {
+    attempts = 1;
+    serdatr = custom.serdatr;
+    while (attempts < max_attempts && !(serdatr & SERDATR_RBF)) {
         wait_at_least_one_scanline();
         serdatr = custom.serdatr;
-    } while (!(serdatr & SERDATR_RBF));
+        ++attempts;
+    }
 
     const uint8_t unlock_result = serdatr & 0xFF;
     if (unlock_result != 0x00) {
-        return false;
+        return VSErr_HardwareNotPresent;
     }
 
     buffy_reset();
@@ -36,7 +44,8 @@ bool buffy_open(void) {
     // Set default host state.
     custom.serper = BUFFY_HOST_STATE_PREFIX | BUFFY_HOST_STATE_CTS_ACTIVE | BUFFY_HOST_STATE_RTS_ACTIVE;
     wait_at_least_one_scanline();
-    return true;
+
+    return VSErr_Success;
 }
 
 void buffy_reset(void) {

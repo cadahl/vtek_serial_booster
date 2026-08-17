@@ -24,7 +24,7 @@ EXTRA_LDFLAGS+= -Wl,-Map=$(DIR)/$(FILENAME).map
 
 CFLAGS+= -m68000 -Wall -Wextra -Wno-unused-parameter -Wno-volatile-register-var -fomit-frame-pointer -Wl,--gc-sections -ffunction-sections -fdata-sections
 ASFLAGS+= -m68000
-LDFLAGS+= -nostartfiles -lamiga 
+LDFLAGS+= -nostartfiles -lamiga
 
 OBJS:=$(addprefix $(DIR)/,$(OBJECTS))
 

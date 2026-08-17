@@ -4,8 +4,9 @@
 #define BUFFY_H
 
 #include <stdbool.h>
+#include "vserr.h"
 
-bool buffy_open(void);
+vserr_t buffy_open(void);
 void buffy_reset(void);
 void buffy_close(void);
 

@@ -54,7 +54,6 @@ struct VTekSerialDevice {
 
 static void reset_paula(void);
 static void update_serial_status_from_cia(struct VTekSerialDevice *vsdev);
-static uint16_t get_tx_fifo_len(struct VTekSerialDevice *vsdev);
 static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1"));
 
 static void rx_fifo_reset(struct VTekSerialDevice *vsdev);
@@ -62,9 +61,10 @@ static void rx_fifo_dequeue_n(struct VTekSerialDevice *vsdev, uint8_t *buffer, u
 static uint16_t rx_fifo_get_length(struct VTekSerialDevice *vsdev);
 
 static void tx_fifo_reset(struct VTekSerialDevice *vsdev);
+static uint16_t tx_fifo_get_length(struct VTekSerialDevice *vsdev);
 
 static bool rrq_is_empty(struct VTekSerialDevice *vsdev);
-static bool rrq_enqueue(struct VTekSerialDevice *vsdev, struct IOExtSer *ioextser);
+static vserr_t rrq_enqueue(struct VTekSerialDevice *vsdev, struct IOExtSer *ioextser);
 static void rrq_try_dequeue_one(struct VTekSerialDevice *vsdev);
 
 #define DEVICE_NAME "vtekser.device"
@@ -157,7 +157,7 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
 
     struct VTekSerialDevice *vsdev = (struct VTekSerialDevice *)dev;
 
-    ioreq->io_Error = IOERR_OPENFAIL;
+    ioreq->io_Error = VSErr_OpenFail;
     ioreq->io_Message.mn_Node.ln_Type = NT_REPLYMSG;
 
     if (unitnum != 0) {
@@ -165,7 +165,7 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
     }
 
     if (is_open) {
-        ioreq->io_Error = SerErr_DevBusy;
+        ioreq->io_Error = VSErr_DevBusy;
         return;
     }
 
@@ -185,7 +185,7 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
         if (!vsdev->is_serialport_owned) {
             UBYTE *serialport_owner = AllocMiscResource(MR_SERIALPORT, (CONST_STRPTR)DEVICE_NAME);
             if (serialport_owner != NULL) {
-                ioreq->io_Error = SerErr_DevBusy;
+                ioreq->io_Error = VSErr_DevBusy;
                 return;
             }
             vsdev->is_serialport_owned = true;
@@ -194,7 +194,7 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
         if (!vsdev->is_serialbits_owned) {
             UBYTE *serialbits_owner = AllocMiscResource(MR_SERIALBITS, (CONST_STRPTR)DEVICE_NAME);
             if (serialbits_owner != NULL) {
-                ioreq->io_Error = SerErr_DevBusy;
+                ioreq->io_Error = VSErr_DevBusy;
                 return;
             }
             vsdev->is_serialbits_owned = true;
@@ -268,19 +268,26 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
             break;
         }
         case CMD_READ: {
-            const ULONG len = ioextser->IOSer.io_Length;
+            if (ioextser->IOSer.io_Length > 65535) {
+                ioreq->io_Error = IOERR_BADLENGTH;
+                return;
+            }
+            const uint16_t len = ioextser->IOSer.io_Length;
             const uint16_t available_len = rx_fifo_get_length(vsdev);
-            // If there isn't enough data in the RX FIFO or requests have already been queued up,
-            // we must queue this request.
-            if (!rrq_is_empty(vsdev) || len > available_len) {
-                if (!rrq_enqueue(vsdev, ioextser)) {
-                    // No more queue slots!
-                    ioreq->io_Error = SerErr_BufErr;
+
+            // If there isn't enough data in the RX FIFO,
+            // *OR* the request queue isn't empty, this
+            // request must also be queued to be completed in order.
+            if (len > available_len || !rrq_is_empty(vsdev)) {
+                vserr_t err = rrq_enqueue(vsdev, ioextser);
+                if (err) {
+                    ioreq->io_Error = err;
                     return;
                 }
-                // If we queued the request, we must clear IOF_QUICK.
+                // Request is now asynchronous, so must clear IOF_QUICK.
                 ioreq->io_Flags &= ~IOF_QUICK;
             } else {
+                // Complete the request immediately.
                 rx_fifo_dequeue_n(vsdev, ioextser->IOSer.io_Data, len);
                 ioextser->IOSer.io_Actual = len;
             }
@@ -288,28 +295,32 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
             break;
         }
         case CMD_WRITE: {
-            LONG len = ioextser->IOSer.io_Length;
+            int32_t len = ioextser->IOSer.io_Length;
             const uint8_t *in_buffer = (uint8_t *)ioextser->IOSer.io_Data;
+
+            // A negative io_Length means it's a string.
             if (len < 0) {
                 len = strlen((const char *)in_buffer);
             }
-            const uint16_t available_len = TX_FIFO_LEN - get_tx_fifo_len(vsdev);
+
+            const uint16_t available_len = TX_FIFO_LEN - tx_fifo_get_length(vsdev);
+
             if (len > available_len) {
-                ioreq->io_Error = SerErr_BufOverflow;
+                ioreq->io_Error = VSErr_BufOverflow;
                 return;
             }
-            for (LONG i = 0; i < len; ++i) {
+
+            // TODO: Simplify this into 1-2 memcpys.
+            for (int32_t i = 0; i < len; ++i) {
                 const uint8_t data = *in_buffer++;
                 const uint16_t next_write_index = (vsdev->tx_fifo_write_index + 1) & (TX_FIFO_LEN - 1);
-                if (next_write_index == vsdev->tx_fifo_read_index) {
-                    // FULL
-                } else {
-                    vsdev->tx_fifo[vsdev->tx_fifo_write_index] = data;
-                    vsdev->tx_fifo_write_index = next_write_index;
-                }
+                vsdev->tx_fifo[vsdev->tx_fifo_write_index] = data;
+                vsdev->tx_fifo_write_index = next_write_index;
             }
+
             ioextser->IOSer.io_Actual = len;
             ioreq->io_Error = 0;
+
             break;
         }
         case SDCMD_SETPARAMS: {
@@ -317,7 +328,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
 
             // We don't do sharing or parity.
             if (serflags & (SERF_SHARED | SERF_PARTY_ON)) {
-                ioreq->io_Error = SerErr_InvParam;
+                ioreq->io_Error = VSErr_InvParam;
                 break;
             }
 
@@ -379,7 +390,7 @@ static ULONG do_abort_io(struct Library *dev, struct IORequest *ioreq)
     KPrintF((CONST_STRPTR) "running do_abort_io()\n");
 #endif
 
-    return IOERR_NOCMD;
+    return VSErr_NoCMD;
 }
 
 /*------- init_device ---------------------------------------
@@ -504,30 +515,10 @@ static void reset_paula(void) {
     custom.serper = 0x001F;
 }
 
-static void rx_fifo_reset(struct VTekSerialDevice *vsdev) {
-    vsdev->rx_fifo_read_index = 0;
-    vsdev->rx_fifo_write_index = 0;
-}
-
-static void tx_fifo_reset(struct VTekSerialDevice *vsdev) {
-    vsdev->tx_fifo_read_index = 0;
-    vsdev->tx_fifo_write_index = 0;
-}
-
-static void update_serial_status_from_cia(struct VTekSerialDevice *vsdev) {
-    vsdev->serial_status = (vsdev->serial_status & 0xFF00) | (ciab.ciapra & 0xFC);
-}
-
-static uint16_t rx_fifo_get_length(struct VTekSerialDevice *vsdev) {
-    const uint32_t ri = vsdev->rx_fifo_read_index;
-    const uint32_t wi = vsdev->rx_fifo_write_index < ri ? vsdev->rx_fifo_write_index + RX_FIFO_LEN : vsdev->rx_fifo_write_index;
-    return wi - ri;
-}
-
-static uint16_t get_tx_fifo_len(struct VTekSerialDevice *vsdev) {
-    const uint32_t ri = vsdev->tx_fifo_read_index;
-    const uint32_t wi = vsdev->tx_fifo_write_index < ri ? vsdev->tx_fifo_write_index + TX_FIFO_LEN : vsdev->tx_fifo_write_index;
-    return wi - ri;
+static uint16_t tx_fifo_get_length(struct VTekSerialDevice *vsdev) {
+    const uint16_t ri = vsdev->tx_fifo_read_index;
+    const uint16_t wi = vsdev->tx_fifo_write_index;
+    return wi < ri ? (int32_t)(TX_FIFO_LEN + wi) - ri : wi - ri;
 }
 
 static inline void try_rx8(struct VTekSerialDevice *vsdev) {
@@ -669,39 +660,62 @@ static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1")) {
     rrq_try_dequeue_one(vsdev);
 }
 
+static void rx_fifo_reset(struct VTekSerialDevice *vsdev) {
+    vsdev->rx_fifo_read_index = 0;
+    vsdev->rx_fifo_write_index = 0;
+}
+
 static void rx_fifo_dequeue_n(struct VTekSerialDevice *vsdev, uint8_t *buffer, uint16_t len) {
-    for (ULONG i = 0; i < len; ++i) {
+    // TODO: Simplify this into 1-2 memcpys.
+    while (len-- > 0) {
         const uint8_t data = vsdev->rx_fifo[vsdev->rx_fifo_read_index];
         vsdev->rx_fifo_read_index = (vsdev->rx_fifo_read_index + 1) & (RX_FIFO_LEN - 1);
         *buffer++ = data;
     }
 }
 
+static uint16_t rx_fifo_get_length(struct VTekSerialDevice *vsdev) {
+    const uint16_t ri = vsdev->rx_fifo_read_index;
+    const uint16_t wi = vsdev->rx_fifo_write_index;
+    return wi < ri ? (int32_t)(RX_FIFO_LEN + wi) - ri : wi - ri;
+}
+
+static void tx_fifo_reset(struct VTekSerialDevice *vsdev) {
+    vsdev->tx_fifo_read_index = 0;
+    vsdev->tx_fifo_write_index = 0;
+}
+
+static void update_serial_status_from_cia(struct VTekSerialDevice *vsdev) {
+    vsdev->serial_status = (vsdev->serial_status & 0xFF00) | (ciab.ciapra & 0xFC);
+}
+
 static bool rrq_is_empty(struct VTekSerialDevice *vsdev) {
     return vsdev->rrq_read_index == vsdev->rrq_write_index;
 }
 
-static bool rrq_enqueue(struct VTekSerialDevice *vsdev, struct IOExtSer *ioextser) {
-    uint16_t next_write_index = (vsdev->rrq_write_index + 1) & (RRQ_LEN - 1);
+static vserr_t rrq_enqueue(struct VTekSerialDevice *vsdev, struct IOExtSer *ioextser) {
+    const uint16_t next_write_index = (vsdev->rrq_write_index + 1) & (RRQ_LEN - 1);
+
     if (next_write_index == vsdev->rrq_read_index) {
-        // Queue is full!
-        return false;
-    } else {
-        vsdev->rrq[vsdev->rrq_write_index] = ioextser;
+        // RRQ is full!
+        return VSErr_TooManyRequests;
     }
-    return true;
+
+    vsdev->rrq[vsdev->rrq_write_index] = ioextser;
+    return VSErr_Success;
 }
 
 static void rrq_try_dequeue_one(struct VTekSerialDevice *vsdev) {
     if (vsdev->rrq_read_index == vsdev->rrq_write_index) {
-        // Queue is empty.
+        // RRQ is empty.
         return;
     }
+
     struct IOExtSer *ioextser = vsdev->rrq[vsdev->rrq_read_index];
-    ULONG requested_len = ioextser->IOSer.io_Length;
+    const uint32_t requested_len = ioextser->IOSer.io_Length;
 
     if (rx_fifo_get_length(vsdev) < requested_len) {
-        // Not enough bytes in RX FIFO.
+        // Not enough bytes in RX FIFO yet.
         return;
     }
 

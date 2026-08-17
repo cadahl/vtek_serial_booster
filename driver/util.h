@@ -17,6 +17,7 @@ void wait_at_least_one_scanline(void);
 #define SERDATR_OVF 0x8000  
 #define SERDATR_RBF 0x4000  
 
+
 #if DEBUG
 /* KPrintF is provided either by libdebug.a (Bebbo's toolchain, linked via
    -ldebug -mcrt=clib2) or by debug.c in this repo (Bartman's elf-toolchain,
