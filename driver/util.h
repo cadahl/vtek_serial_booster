@@ -5,10 +5,6 @@
 
 #include <stdint.h>
 
-#ifndef VSFUNC
-#define VSFUNC
-#endif
-
 #define STR(s) #s      /* Turn s into a string literal without expanding macro definitions (however, \
                           if invoked from a macro, macro arguments are expanded). */
 #define XSTR(s) STR(s) /* Turn s into a string literal after macro-expanding it. */

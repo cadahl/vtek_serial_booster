@@ -28,26 +28,26 @@ extern struct CIA ciab;
 struct VTekSerialDevice {
     struct Library library;
 
+    struct Interrupt vbl_interrupt;
+
+    uint8_t old_ciab_ddra;
+    uint8_t host_state;
     uint16_t serial_status;
     uint16_t serper;
 
     struct char_fifo rx_fifo;
     struct char_fifo tx_fifo;
-
-    uint8_t host_state;
-    struct Interrupt vbl_interrupt;
-    bool is_serialport_owned;
-    bool is_serialbits_owned;
-    bool is_interrupt_server_installed;
-
     struct ptr_fifo rrq;
 };
 
 static void reset_paula(void);
-static void update_serial_status_from_cia(struct VTekSerialDevice *vsdev);
 static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1"));
 
-static void rrq_try_dequeue_one(struct VTekSerialDevice *vsdev);
+static void serialbits_init(struct VTekSerialDevice *vsdev);
+static void serialbits_deinit(struct VTekSerialDevice *vsdev);
+static void serialbits_update_serial_status(struct VTekSerialDevice *vsdev);
+
+static void rrq_try_complete_one(struct VTekSerialDevice *vsdev);
 
 #define DEVICE_NAME "vtekser.device"
 #define DEVICE_DATE "(16 Aug 2026)"
@@ -103,26 +103,9 @@ static BPTR do_expunge(struct Library *dev) {
 #if DEBUG
     KPrintF((CONST_STRPTR) "running do_expunge()\n");
 #endif
-    struct VTekSerialDevice *vsdev = (struct VTekSerialDevice *)dev;
-
     if (dev->lib_OpenCnt != 0) {
         dev->lib_Flags |= LIBF_DELEXP;
         return 0;
-    }
-
-    if (vsdev->is_serialport_owned) {
-        FreeMiscResource(MR_SERIALPORT);
-        vsdev->is_serialport_owned = false;
-    }
-
-    if (vsdev->is_serialbits_owned) {
-        FreeMiscResource(MR_SERIALBITS);
-        vsdev->is_serialbits_owned = false;
-    }
-
-    if (vsdev->is_interrupt_server_installed) {
-        RemIntServer(INTB_VERTB, &vsdev->vbl_interrupt);
-        vsdev->is_interrupt_server_installed = false;
     }
 
     BPTR seg_list = saved_seg_list;
@@ -159,43 +142,37 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
     if (!MiscBase) {
         MiscBase = OpenResource((CONST_STRPTR)"misc.resource");
         if (!MiscBase) {
+            ioreq->io_Error = VSErr_OpenFail;
             return;
         }
     }
 
-    if (!vsdev->is_serialport_owned) {
-        UBYTE *serialport_owner = AllocMiscResource(MR_SERIALPORT, (CONST_STRPTR)DEVICE_NAME);
-        if (serialport_owner != NULL) {
-            ioreq->io_Error = VSErr_DevBusy;
-            return;
-        }
-        vsdev->is_serialport_owned = true;
+    UBYTE *serialport_owner = AllocMiscResource(MR_SERIALPORT, (CONST_STRPTR)DEVICE_NAME);
+    if (serialport_owner != NULL) {
+        ioreq->io_Error = VSErr_DevBusy;
+        return;
     }
 
-    if (!vsdev->is_serialbits_owned) {
-        UBYTE *serialbits_owner = AllocMiscResource(MR_SERIALBITS, (CONST_STRPTR)DEVICE_NAME);
-        if (serialbits_owner != NULL) {
-            ioreq->io_Error = VSErr_DevBusy;
-            return;
-        }
-        vsdev->is_serialbits_owned = true;
+    UBYTE *serialbits_owner = AllocMiscResource(MR_SERIALBITS, (CONST_STRPTR)DEVICE_NAME);
+    if (serialbits_owner != NULL) {
+        ioreq->io_Error = VSErr_DevBusy;
+        return;
     }
 
     reset_paula();
     char_fifo_init(&vsdev->rx_fifo, 8192);
     char_fifo_init(&vsdev->tx_fifo, 8192);
     ptr_fifo_init(&vsdev->rrq, 8);
-    update_serial_status_from_cia(vsdev);
 
-    if (!vsdev->is_interrupt_server_installed) {
-        vsdev->vbl_interrupt.is_Node.ln_Type = NT_INTERRUPT;
-        vsdev->vbl_interrupt.is_Node.ln_Pri  = 0;
-        vsdev->vbl_interrupt.is_Node.ln_Name = DEVICE_NAME;
-        vsdev->vbl_interrupt.is_Data = vsdev;
-        vsdev->vbl_interrupt.is_Code = (APTR)vbl_handler;
-        AddIntServer(INTB_VERTB, &vsdev->vbl_interrupt);
-        vsdev->is_interrupt_server_installed = true;
-    }
+    serialbits_init(vsdev);
+    serialbits_update_serial_status(vsdev);
+
+    vsdev->vbl_interrupt.is_Node.ln_Type = NT_INTERRUPT;
+    vsdev->vbl_interrupt.is_Node.ln_Pri  = 0;
+    vsdev->vbl_interrupt.is_Node.ln_Name = DEVICE_NAME;
+    vsdev->vbl_interrupt.is_Data = vsdev;
+    vsdev->vbl_interrupt.is_Code = (APTR)vbl_handler;
+    AddIntServer(INTB_VERTB, &vsdev->vbl_interrupt);
 
     is_open = true;
 
@@ -211,11 +188,16 @@ static BPTR do_close(struct Library *dev, struct IORequest *ioreq)
 
     struct VTekSerialDevice *vsdev = (struct VTekSerialDevice *)dev;
 
+    RemIntServer(INTB_VERTB, &vsdev->vbl_interrupt);
+
     buffy_close();
 
     char_fifo_deinit(&vsdev->rx_fifo);
     char_fifo_deinit(&vsdev->tx_fifo);
     ptr_fifo_deinit(&vsdev->rrq);
+
+    FreeMiscResource(MR_SERIALPORT);
+    FreeMiscResource(MR_SERIALBITS);
 
     ioreq->io_Device = NULL;
     ioreq->io_Unit = NULL;
@@ -318,7 +300,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
 
             // Character length
             const uint16_t read_len = ioextser->io_ReadLen;
-            if (read_len < 8 || read_len > 9) {
+            if (!(read_len == 7 || read_len == 8)) {
                 ioreq->io_Error = SerErr_InvParam;
                 break;
             } 
@@ -327,10 +309,6 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
 
             if (serper > 0x7EFF) {
                 serper = 0x7EFF;
-            }
-
-            if (ioextser->io_ReadLen == 9) {
-                serper |= 0x8000;
             }
 
             vsdev->serper = serper;
@@ -346,8 +324,10 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
         }
         case SDCMD_QUERY: {
             ioextser->IOSer.io_Actual = char_fifo_get_length(&vsdev->rx_fifo);
-            update_serial_status_from_cia(vsdev);
+
+            serialbits_update_serial_status(vsdev);
             ioextser->io_Status = vsdev->serial_status;
+
             ioreq->io_Error = 0;
             break;
         }
@@ -556,14 +536,10 @@ static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1")) {
 
     // Now we're outside the VBLANK region, so display DMA is going again.
     // We use this moment to try to complete one CMD_READ request from the RRQ.
-    rrq_try_dequeue_one(vsdev);
+    rrq_try_complete_one(vsdev);
 }
 
-static void update_serial_status_from_cia(struct VTekSerialDevice *vsdev) {
-    vsdev->serial_status = (vsdev->serial_status & 0xFF00) | (ciab.ciapra & 0xFC);
-}
-
-static void rrq_try_dequeue_one(struct VTekSerialDevice *vsdev) {
+static void rrq_try_complete_one(struct VTekSerialDevice *vsdev) {
     struct IOExtSer *ioextser = NULL;
     vserr_t err = ptr_fifo_peek(&vsdev->rrq, (void **)&ioextser);
     if (err) {
@@ -581,4 +557,27 @@ static void rrq_try_dequeue_one(struct VTekSerialDevice *vsdev) {
     ioextser->IOSer.io_Actual = requested_len;
 
     ptr_fifo_dequeue(&vsdev->rrq, NULL);
+}
+
+static void serialbits_init(struct VTekSerialDevice *vsdev) {
+    // Save data direction
+    vsdev->old_ciab_ddra = ciab.ciaddra;
+
+    // Outputs
+    ciab.ciaddra |= (CIAF_COMDTR | CIAF_COMRTS);
+
+    // Inputs
+    ciab.ciaddra &= ~(CIAF_COMCD | CIAF_COMCTS | CIAF_COMDSR);
+
+    // Activate DTR and RTS
+    ciab.ciapra &= ~(CIAF_COMDTR | CIAF_COMRTS);
+}
+
+static void serialbits_deinit(struct VTekSerialDevice *vsdev) {
+    // Restore data direction
+    ciab.ciaddra = vsdev->old_ciab_ddra;
+}
+
+static void serialbits_update_serial_status(struct VTekSerialDevice *vsdev) {
+    vsdev->serial_status = (vsdev->serial_status & 0xFF00) | (ciab.ciapra & 0xFC);
 }

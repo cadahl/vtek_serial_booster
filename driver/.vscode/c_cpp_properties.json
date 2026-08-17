@@ -7,7 +7,8 @@
             ],
             "defines": [
                 "__GNUC__=6",
-                "_NO_INLINE"
+                "_NO_INLINE",
+                "VSFUNC="
             ],
             //Full path of the compiler being used to enable more accurate IntelliSense.
             "compilerPath": "/opt/amiga/bin/m68k-amigaos-gcc",

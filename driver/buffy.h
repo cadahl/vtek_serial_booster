@@ -5,7 +5,6 @@
 
 #include <stdbool.h>
 #include "vserr.h"
-#include "util.h"
 #include "buffy_defs.h"
 
 VSFUNC vserr_t buffy_open(void);
