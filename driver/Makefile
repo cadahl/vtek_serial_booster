@@ -15,16 +15,16 @@ ifeq ($(MAKECMDGOALS), debug)
  EXTRA_LDFLAGS+= -ldebug
 else
  DIR=$(RELDIR)
- EXTRA_CFLAGS+= -g -O2
+ EXTRA_CFLAGS+= -g -s -O2
 endif
 
 CC=/opt/amiga/bin/m68k-amigaos-gcc
 AS=/opt/amiga/bin/m68k-amigaos-as
 EXTRA_LDFLAGS+= -Wl,-Map=$(DIR)/$(FILENAME).map
 
-CFLAGS+= -m68000 -Wall -Wextra -Wno-unused-parameter -Wno-volatile-register-var -fomit-frame-pointer -Wl,--gc-sections -ffunction-sections -fdata-sections
+CFLAGS+= -m68000 -Wall -Wextra -Wno-unused-parameter -Wno-volatile-register-var -fomit-frame-pointer -fvisibility=hidden
 ASFLAGS+= -m68000
-LDFLAGS+= -nostartfiles -lamiga
+LDFLAGS+= -nostartfiles -lamiga -fvisibility=hidden
 
 OBJS:=$(addprefix $(DIR)/,$(OBJECTS))
 

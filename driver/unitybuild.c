@@ -6,3 +6,4 @@
 #include "device.c"
 #include "buffy.c"
 #include "util.c"
+#include "char_fifo.c"
