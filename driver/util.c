@@ -5,28 +5,20 @@
 
 extern struct Custom custom;
 
-static __attribute__((noinline)) void abuncha_nops(void) {
-    // Leave some room for DMA - 256 clock cycles.
-    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-    NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP(); NOP();
-}
-
 VSFUNC void wait_at_least_one_scanline(void) {
     uint16_t first = custom.vhposr & 0xFF00;
     uint16_t second = first;
     do {
-        abuncha_nops();
+        for (uint16_t i = 0; i < 16; ++i) {
+            NOP();
+        }
         second = custom.vhposr & 0xFF00;
     } while(second == first);
     uint16_t third = second;
     do {
-        abuncha_nops();
+        for (uint16_t i = 0; i < 16; ++i) {
+            NOP();
+        }
         third = custom.vhposr & 0xFF00;
     } while(third == second);
 }
