@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2026 Carl Ådahl / VTek */
+/* SPDX-License-Identifier: BSD-3-Clause */
 #include <stdbool.h>
 #include <hardware/custom.h>
 #include "util.h"
