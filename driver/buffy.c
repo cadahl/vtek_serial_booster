@@ -110,7 +110,7 @@ VSFUNC vserr_t buffy_get_config_block(struct buffy_config_block *cfg) {
 }
 
 static vserr_t transmit_char(uint8_t c) {
-    uint16_t attempts_remaining = 10;
+    uint16_t attempts_remaining = 16;
     uint16_t intreqr = custom.intreqr;
     while (--attempts_remaining > 0 && !(intreqr & INTF_TBE)) {
         wait_at_least_one_scanline();
@@ -127,7 +127,7 @@ static vserr_t transmit_char(uint8_t c) {
 }
 
 static vserr_t receive_char(uint8_t *c) {
-    uint16_t attempts_remaining = 10;
+    uint16_t attempts_remaining = 16;
     uint16_t serdatr = custom.serdatr;
     while (--attempts_remaining > 0 && !(serdatr & SERDATR_RBF)) {
         wait_at_least_one_scanline();

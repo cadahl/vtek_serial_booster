@@ -580,6 +580,8 @@ static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1")) {
 
     DISABLE_INTERRUPTS();
 
+    serialbits_poll(vsdev);
+
     const volatile uint32_t *vposr32 = (const volatile uint32_t *)0xdff004;
 
     uint32_t vpos = *vposr32 & 0x1FF00;
