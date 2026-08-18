@@ -18,13 +18,28 @@ VSFUNC vserr_t buffy_open(void) {
 
     custom.serper = BUFFY_CMD_UNLOCK_REQUEST;
     
-    uint8_t challenge_code = 0;
-    vserr_t err = receive_char(&challenge_code);
+    uint8_t challenge_high = 0;
+    uint8_t challenge_low = 0;
+    vserr_t err = receive_char(&challenge_high);
+    if (err) {
+        return VSErr_HardwareNotPresent;
+    }
+    err = receive_char(&challenge_low);
     if (err) {
         return VSErr_HardwareNotPresent;
     }
 
-    custom.serper = BUFFY_CMD_UNLOCK_RESPONSE_PREFIX | challenge_code;
+    uint16_t challenge = (challenge_high << 8) | challenge_low;
+    uint16_t response = challenge * 0x8D27;
+
+    err = transmit_char(response >> 8);
+    if (err) {
+        return VSErr_HardwareNotPresent;
+    }
+    err = transmit_char(response & 0xFF);
+    if (err) {
+        return VSErr_HardwareNotPresent;
+    }
 
     uint8_t unlock_result = 0;
     err = receive_char(&unlock_result);
@@ -33,13 +48,13 @@ VSFUNC vserr_t buffy_open(void) {
     }
 
     if (unlock_result != 0x00) {
-        return VSErr_HardwareNotPresent;
+        return VSErr_HardwareCommandFailed;
     }
 
     buffy_reset();
 
     // Set default host state.
-    custom.serper = BUFFY_HOST_STATE_PREFIX | BUFFY_HOST_STATE_CTS_ACTIVE | BUFFY_HOST_STATE_RTS_ACTIVE;
+    custom.serper = BUFFY_CMD_SET_HOST_STATE_PREFIX | BUFFY_HOST_STATE_CTS_ACTIVE | BUFFY_HOST_STATE_RTS_ACTIVE;
     wait_at_least_one_scanline();
 
     return VSErr_Success;
@@ -51,7 +66,7 @@ VSFUNC void buffy_reset(void) {
 }
 
 VSFUNC void buffy_close(void) {
-    custom.serper = BUFFY_HOST_STATE_PREFIX | BUFFY_HOST_STATE_CTS_ACTIVE | BUFFY_HOST_STATE_RTS_ACTIVE;
+    custom.serper = BUFFY_CMD_SET_HOST_STATE_PREFIX | BUFFY_HOST_STATE_CTS_ACTIVE | BUFFY_HOST_STATE_RTS_ACTIVE;
     wait_at_least_one_scanline();
 
     custom.serper = BUFFY_CMD_LOCK;

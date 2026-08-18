@@ -336,8 +336,8 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
 
             uint32_t serper = (uint16_t)((((3546895ULL << 16ULL) / ioextser->io_Baud) >> 16ULL) - 1);
 
-            if (serper > 0x7EFF) {
-                serper = 0x7EFF;
+            if (serper >= BUFFY_SERPER_START) {
+                serper = BUFFY_SERPER_START-1;
             }
 
             vsdev->serper = serper;
@@ -346,7 +346,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
             wait_at_least_one_scanline();
 
             // Send initial host state.
-            custom.serper = BUFFY_HOST_STATE_PREFIX | vsdev->host_state;
+            custom.serper = BUFFY_CMD_SET_HOST_STATE_PREFIX | (vsdev->host_state & BUFFY_SET_HOST_STATE_PARAM_MASK);
 
             ioreq->io_Error = 0;
             break;
