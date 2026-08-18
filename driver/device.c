@@ -43,6 +43,8 @@ struct VTekSerialDevice {
     uint16_t serial_status;
     uint16_t serper;
 
+    bool is_host_state_dirty;
+
     struct char_fifo rx_fifo;
     struct char_fifo tx_fifo;
     struct ptr_fifo rrq;
@@ -670,9 +672,11 @@ static void serialbits_poll(struct VTekSerialDevice *vsdev) {
     const uint8_t old_host_state = vsdev->host_state;
     const uint8_t new_host_state = ((vsdev->host_state & 0xE0) | (serialbits >> 3));
 
-    if (old_host_state == new_host_state) {
+    if (!vsdev->is_host_state_dirty && old_host_state == new_host_state) {
         return;
     }
+
+    vsdev->is_host_state_dirty = false;
 
     custom.serper = BUFFY_CMD_SET_HOST_STATE_PREFIX | (new_host_state & BUFFY_SET_HOST_STATE_PARAM_MASK);
 }
