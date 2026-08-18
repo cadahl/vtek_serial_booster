@@ -54,7 +54,7 @@ static void vbl_handler(struct VTekSerialDevice *vsdev asm("a1"));
 
 static void serialbits_init(struct VTekSerialDevice *vsdev);
 static void serialbits_deinit(struct VTekSerialDevice *vsdev);
-static void serialbits_update_serial_status(struct VTekSerialDevice *vsdev);
+static void serialbits_poll(struct VTekSerialDevice *vsdev);
 
 static void rrq_try_complete_one(struct VTekSerialDevice *vsdev);
 static void trq_try_complete_one(struct VTekSerialDevice *vsdev);
@@ -145,7 +145,7 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
     }
 
     if (!buffy_open()) {
-        // No Buffy chip or something else went wrong.
+        ioreq->io_Error = VSErr_HardwareNotPresent;
         return;
     }
 
@@ -176,7 +176,7 @@ static void do_open(struct Library *dev, struct IORequest *ioreq, ULONG unitnum,
     ptr_fifo_init(&vsdev->trq, DEFAULT_TRQ_LEN);
 
     serialbits_init(vsdev);
-    serialbits_update_serial_status(vsdev);
+    serialbits_poll(vsdev);
 
     vsdev->vbl_interrupt.is_Node.ln_Type = NT_INTERRUPT;
     vsdev->vbl_interrupt.is_Node.ln_Pri  = 0;
@@ -245,7 +245,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
             char_fifo_reset(&vsdev->tx_fifo);
 
             AddIntServer(INTB_VERTB, &vsdev->vbl_interrupt);
-            ioreq->io_Error = 0;
+            ioreq->io_Error = VSErr_Success;
             break;
         }
         case CMD_READ: {
@@ -272,7 +272,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
                 char_fifo_dequeue_n(&vsdev->rx_fifo, ioextser->IOSer.io_Data, len);
                 ioextser->IOSer.io_Actual = len;
             }
-            ioreq->io_Error = 0;
+            ioreq->io_Error = VSErr_Success;
             break;
         }
         case CMD_WRITE: {
@@ -308,7 +308,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
                 char_fifo_enqueue_n(&vsdev->rx_fifo, ioextser->IOSer.io_Data, len);
                 ioextser->IOSer.io_Actual = len;
             }
-            ioreq->io_Error = 0;
+            ioreq->io_Error = VSErr_Success;
             break;
         }
         case SDCMD_SETPARAMS: {
@@ -330,7 +330,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
             // Character length
             const uint16_t read_len = ioextser->io_ReadLen;
             if (!(read_len == 7 || read_len == 8)) {
-                ioreq->io_Error = SerErr_InvParam;
+                ioreq->io_Error = VSErr_InvParam;
                 break;
             } 
 
@@ -348,16 +348,16 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
             // Send initial host state.
             custom.serper = BUFFY_CMD_SET_HOST_STATE_PREFIX | (vsdev->host_state & BUFFY_SET_HOST_STATE_PARAM_MASK);
 
-            ioreq->io_Error = 0;
+            ioreq->io_Error = VSErr_Success;
             break;
         }
         case SDCMD_QUERY: {
             ioextser->IOSer.io_Actual = char_fifo_get_length(&vsdev->rx_fifo);
 
-            serialbits_update_serial_status(vsdev);
+            serialbits_poll(vsdev);
             ioextser->io_Status = vsdev->serial_status;
 
-            ioreq->io_Error = 0;
+            ioreq->io_Error = VSErr_Success;
             break;
         }
         case VTSDCMD_SET_CFG: {
@@ -371,6 +371,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
                 ioreq->io_Error = err;
                 break;
             }
+            ioreq->io_Error = VSErr_Success;
             break;
         }
         case VTSDCMD_GET_CFG: {
@@ -384,6 +385,7 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
                 ioreq->io_Error = err;
                 break;
             }
+            ioreq->io_Error = VSErr_Success;
             break;
         }
     }
@@ -661,7 +663,16 @@ static void serialbits_deinit(struct VTekSerialDevice *vsdev) {
     ciab.ciaddra = vsdev->old_ciab_ddra;
 }
 
-static void serialbits_update_serial_status(struct VTekSerialDevice *vsdev) {
-    vsdev->serial_status = (vsdev->serial_status & 0xFF00) | (ciab.ciapra & 0xFC);
-}
+static void serialbits_poll(struct VTekSerialDevice *vsdev) {
+    const uint8_t serialbits = ciab.ciapra & 0xF8;
+    vsdev->serial_status = (vsdev->serial_status & 0xFF00) | serialbits;
 
+    const uint8_t old_host_state = vsdev->host_state;
+    const uint8_t new_host_state = ((vsdev->host_state & 0xE0) | (serialbits >> 3));
+
+    if (old_host_state == new_host_state) {
+        return;
+    }
+
+    custom.serper = BUFFY_CMD_SET_HOST_STATE_PREFIX | (new_host_state & BUFFY_SET_HOST_STATE_PARAM_MASK);
+}

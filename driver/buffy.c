@@ -53,10 +53,6 @@ VSFUNC vserr_t buffy_open(void) {
 
     buffy_reset();
 
-    // Set default host state.
-    custom.serper = BUFFY_CMD_SET_HOST_STATE_PREFIX | BUFFY_HOST_STATE_CTS_ACTIVE | BUFFY_HOST_STATE_RTS_ACTIVE;
-    wait_at_least_one_scanline();
-
     return VSErr_Success;
 }
 
@@ -66,10 +62,10 @@ VSFUNC void buffy_reset(void) {
 }
 
 VSFUNC void buffy_close(void) {
-    custom.serper = BUFFY_CMD_SET_HOST_STATE_PREFIX | BUFFY_HOST_STATE_CTS_ACTIVE | BUFFY_HOST_STATE_RTS_ACTIVE;
+    custom.serper = BUFFY_CMD_LOCK;
     wait_at_least_one_scanline();
 
-    custom.serper = BUFFY_CMD_LOCK;
+    custom.serper = BUFFY_CMD_RESET;
     wait_at_least_one_scanline();
 }
 

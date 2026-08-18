@@ -24,10 +24,13 @@ enum buffy_command {
 
 #define BUFFY_SET_HOST_STATE_PARAM_MASK     0x007F
 
-#define BUFFY_HOST_STATE_RTS_ACTIVE         0x0001
-#define BUFFY_HOST_STATE_CTS_ACTIVE         0x0002
-#define BUFFY_HOST_STATE_HBLANK_INT2_WANTED 0x0004
-#define BUFFY_HOST_STATE_XONXOFF_ENABLED    0x0008
+#define BUFFY_HOST_STATE_DSR                 0x0001
+#define BUFFY_HOST_STATE_CTS                 0x0002
+#define BUFFY_HOST_STATE_CD                  0x0004
+#define BUFFY_HOST_STATE_RTS                 0x0008
+#define BUFFY_HOST_STATE_DTR                 0x0010
+#define BUFFY_HOST_STATE_HBLANK_INT2_WANTED  0x0020
+#define BUFFY_HOST_STATE_XONXOFF_ENABLED     0x0040
 
 /*
     Config block.
