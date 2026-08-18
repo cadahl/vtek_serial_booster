@@ -20,6 +20,7 @@
 #include "util.h"
 #include "char_fifo.h"
 #include "ptr_fifo.h"
+#include "vtekser.h"
 
 // Amiga-side RX and TX FIFO lengths.
 #define DEFAULT_RX_FIFO_LEN 8192
@@ -357,6 +358,32 @@ static void do_begin_io(struct Library *dev, struct IORequest *ioreq)
             ioextser->io_Status = vsdev->serial_status;
 
             ioreq->io_Error = 0;
+            break;
+        }
+        case VTSDCMD_SET_CFG: {
+            // TODO: flush FIFOs
+            if (ioextser->IOSer.io_Length != sizeof(struct buffy_config_block)) {
+                ioreq->io_Error = IOERR_BADLENGTH;
+                break;
+            }
+            vserr_t err = buffy_set_config_block((const struct buffy_config_block *)ioextser->IOSer.io_Data);
+            if (err) {
+                ioreq->io_Error = err;
+                break;
+            }
+            break;
+        }
+        case VTSDCMD_GET_CFG: {
+            // TODO: flush FIFOs
+            if (ioextser->IOSer.io_Length != sizeof(struct buffy_config_block)) {
+                ioreq->io_Error = IOERR_BADLENGTH;
+                break;
+            }
+            vserr_t err = buffy_get_config_block((struct buffy_config_block *)ioextser->IOSer.io_Data);
+            if (err) {
+                ioreq->io_Error = err;
+                break;
+            }
             break;
         }
     }
