@@ -12,7 +12,7 @@
             ],
             //Full path of the compiler being used to enable more accurate IntelliSense.
             "compilerPath": "/opt/amiga/bin/m68k-amigaos-gcc",
-            "cStandard": "c11",
+            "cStandard": "c23",
             "cppStandard": "c++17",
             "intelliSenseMode": "gcc-x64"
         }

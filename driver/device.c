@@ -637,3 +637,4 @@ static void serialbits_deinit(struct VTekSerialDevice *vsdev) {
 static void serialbits_update_serial_status(struct VTekSerialDevice *vsdev) {
     vsdev->serial_status = (vsdev->serial_status & 0xFF00) | (ciab.ciapra & 0xFC);
 }
+

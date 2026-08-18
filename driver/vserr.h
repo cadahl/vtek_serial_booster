@@ -33,9 +33,9 @@ enum VSErr {
    VSErr_DetectedBreak      = SerErr_DetectedBreak,
 
    // Error codes specific to this driver.
-   VSErr_HardwareNotPresent = 64,
-   VSErr_TooManyRequests    = 65,
-
+   VSErr_HardwareNotPresent     = 64,
+   VSErr_TooManyRequests        = 65,
+   VSErr_HardwareCommandFailed  = 66,
 };
 
 typedef enum VSErr vserr_t;
